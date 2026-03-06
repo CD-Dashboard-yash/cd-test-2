@@ -3,11 +3,5 @@
 # All files other than .github/* → assign to rsg_dev_architects team
 *             @philips-internal/rsg_dev_architects
 /automation_test_suite/** @philips-internal/rsg_qa_architects
-/.github/**   @philips-internal/rsg_devops
-/CICD/iac-scan-suppression_*.yaml          @philips-internal/dip_ghas_securitysagroup
-/CICD/git-secrets-allow-pattern_*.txt      @philips-internal/dip_ghas_securitysagroup
-
-/.github/**   @philips-internal/rsg_devops
+/.github/**   @himansunayak23 @devidehi
 /.github/CODEOWNERS @himansunayak23
-/CICD/iac-scan-suppression_*.yaml          @philips-internal/dip_ghas_securitysagroup
-/CICD/git-secrets-allow-pattern_*.txt      @philips-internal/dip_ghas_securitysagroup

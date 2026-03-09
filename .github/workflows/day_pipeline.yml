@@ -1,0 +1,165 @@
+name: DAY_pipeline
+on:
+  workflow_dispatch:
+  push:
+    branches:
+    - master
+env:
+  https_proxy: ${{ vars.HTTPS_PROXY }}
+  http_proxy: ${{ vars.HTTP_PROXY }}
+  no_proxy: ${{ vars.NO_PROXY }}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  DAY_Build:
+    name: DAY_Build
+    runs-on: ${{ vars.HOST }}
+    container:
+      image: psi2m-serviciability-docker-local.artifactory.pic.philips.com/psi2m-iot-build:latest
+      volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    timeout-minutes: 360
+    steps:
+    - name: Checkout
+      uses: philips-internal/RSG_Common_action/.github/actions/clone@ci_migration_poc
+      with:
+        PROGRAM_NAME: HUB
+    - name: Prerequisite
+      id: prerequisite
+      run: 'chmod -R 777 *
+
+        WS=''/__w/psi2m-IoT.HubMonitoringRegistrationService/psi2m-IoT.HubMonitoringRegistrationService''
+
+        sudo cp $WS/RSG_Common_action/source/IoT/settings.xml $WS/source/HubMonitoringRegistrationService
+
+        sudo cp $WS/RSG_Common_action/source/IoT/iot_build.sh .
+
+        sed -i -e ''s/\r$//'' iot_build.sh
+
+        datetime=$(date +''%Y%m%d.%H_%M'')
+
+        echo "datetime=$datetime" >>$GITHUB_OUTPUT'
+    - name: Build
+      run: 'chmod -R 777 *
+
+        ./iot_build.sh ${{ env.WORKDIR_PATH }} ${{ env.POM_PATH }} ${{ env.BUILD_TYPE }} ${{ env.SERVICE_TYPE }} ${{ env.SKIP_MUTATIONTEST }} ${{ env.INSTALL_PATH }} ${{ env.SERVICE_NAME }} ${{ env.JUNIT_VERSION }} ${{ env.ROLE_ID }} ${{ env.SECRET_ID }} ${{ env.JAVA_VERSION }}'
+      env:
+        WORKDIR_PATH: /__w/psi2m-IoT.HubMonitoringRegistrationService/psi2m-IoT.HubMonitoringRegistrationService
+        POM_PATH: source/HubMonitoringRegistrationService
+        BUILD_TYPE: INSTALL
+        SERVICE_TYPE: HUB
+        SKIP_MUTATIONTEST: NO
+        INSTALL_PATH: NO
+        SERVICE_NAME: NO
+        JUNIT_VERSION: NO
+        ROLE_ID: NO
+        SECRET_ID: NO
+        JAVA_VERSION: JAVA17
+    - name: Automated Test Sanity
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: iot_testautomation
+      env:
+        WORKDIR_PATH: /github/workspace/
+        AUTOMATION_PATH: automation_test_suite
+        AUTOMATION_TYPE: Sanity
+        DB_EXECUTION: 'YES'
+        DB_TUNNEL_URL: postgres-2bbc191d-44de-41b4-a4e0-23ed0f76ddbd.chzzajfvmzaf.eu-west-1.rds.amazonaws.com
+        SERVICE_NAME: IoT.HubMonitoringRegistrationService
+        JAVA_VERSION: JAVA11
+    - name: Upload Artifacts
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: iot-upload-artifacts
+      env:
+        WORKDIR: /github/workspace
+        IOT_SERVICE_TYPE: CFDOCKER
+        POM_PATH: /source/HubMonitoringRegistrationService
+        SERVICE_NAME: IoTHubMonitoringRegistrationService
+        JAR_NAME: IoTHubMonitoringRegistrationService
+        REPO_NAME: iot-releases
+    - name: Upload Images
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: iot-upload-docker
+      env:
+        WORKDIR: /github/workspace
+        IOT_SERVICE_TYPE: HUB
+        POM_PATH: source/HubMonitoringRegistrationService
+        SERVICE_NAME: IoTHubMonitoringRegistrationService
+        DOCKER_IMAGE_NAME: monitoring-registration-service
+        DOCKER_IMAGE_NAMESPACE: iot-releases/linux
+    - name: Upload Images SG
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: iot_upload_ecr
+      env:
+        WORKDIR: /github/workspace
+        IOT_SERVICE_TYPE: AWS
+        POM_PATH: source/HubMonitoringRegistrationService
+        SERVICE_NAME: IoTHubMonitoringRegistrationService
+        DOCKER_IMAGE_NAME: monitoring-registration-service
+        RELEASE: master
+    - name: Package Helm Chart
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: update_chart_version
+      env:
+        WORKDIR: /github/workspace
+        POM_PATH: source/HubMonitoringRegistrationService
+        SERVICE_GROUP: HSP_PS_RSG_OnPremMonitoringGroup_CICD
+        VERSION_PATH: Versions/IoT.HubMonitoringRegistrationService
+        BRANCH_NAME: master
+    - name: Update Version
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: update_version
+      env:
+        WORKDIR: /github/workspace
+        VERSION_PATH: Versions/IoTCloud/IoT.HubMonitoringRegistrationService
+        ARTIFACT_VERSION: source/HubMonitoringRegistrationService
+        ARTIFACTORY_PATH: iot-releases/IoTCLOUD/IoTHubMonitoringRegistrationService/IoTHubMonitoringRegistrationService
+        HARBOR_PATH: docker.eu1.hsdp.io/iot-releases/linux/monitoring-registration-service
+        BRANCH_NAME: master
+    - name: Update Version SG
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: update_servicegroup_version
+      env:
+        WORKDIR: /github/workspace
+        VERSION_PATH: Versions/IoT.HubMonitoringRegistrationService
+        ARTIFACT_VERSION: source/HubMonitoringRegistrationService
+        ARTIFACTORY_PATH: iot-releases/IoTCLOUD/IoTHubMonitoringRegistrationService/IoTHubMonitoringRegistrationService
+        HARBOR_PATH: master/monitoring-registration-service
+        BRANCH_NAME: master
+        SERVICE_GROUP: HSP_PS_RSG_OnPremMonitoringGroup_CICD
+    - name: SonarQube Scan
+      uses: philips-internal/RSG_Common_action/.github/actions/sonar@ci_migration_poc
+      with:
+        ACTION_TYPE: SonarScan
+    - name: Blackduck Scan
+      uses: philips-internal/RSG_Common_action/.github/actions/Blackduck@ci_migration_poc
+      with:
+        DETECT_PROJECT_NAME: ES_IoT_Cloud_Master
+        DETECT_PROJECT_VERSION_NAME: IoTHubMonitoringRegistrationService
+    - name: Fortify Scan
+      uses: philips-internal/RSG_Common_action/.github/actions/Fortify@ci_migration_poc
+      with:
+        FORTIFY_APPLICATION_NAME: PSI2M_IoT
+        FORTIFY_VERSION_NAME: IoT.HubMonitoringRegistrationService_master
+    - name: Update KPI
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: pedestal_integration
+      env:
+        JOB_NAME: IoT.HubMonitoringRegistrationService_DAYBUILD
+        DATE_TIME: ${{ steps.prerequisite.outputs.datetime }}
+    - name: Cleanup
+      if: always()
+      uses: philips-internal/RSG_Common_action/.github/actions/CleanUp@ci_migration_poc
+      with:
+        RUNNER_WORKSPACE: $RUNNER_WORKSPACE
+        GITHUB_WORKSPACE: $GITHUB_WORKSPACE
+
+

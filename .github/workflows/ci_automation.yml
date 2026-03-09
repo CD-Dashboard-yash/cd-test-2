@@ -1,0 +1,280 @@
+name: CI_Automation
+on:
+  workflow_dispatch:
+    inputs:
+      s3_key:
+        required: true
+        type: string
+env:
+  https_proxy: ${{ vars.HTTPS_PROXY }}
+  http_proxy: ${{ vars.HTTP_PROXY }}
+  no_proxy: ${{ vars.NO_PROXY }}
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  CI_Automation:
+    name: CI_Automation
+    runs-on: ${{ vars.HOST }}
+    container:
+      image: docker.eu1.hsdp.io/rsg-cd/linux/rsg-build:28.10.2025
+      volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    timeout-minutes: 360
+    steps:
+     
+    
+    - name: Checkout
+      uses: philips-internal/RSG_Common_action/.github/actions/clone_ci_automation@ci_migration_poc
+      with:
+        group_name: OnCloudGatewayGroup
+        branch_name: master
+
+    - name: Prerequisite
+      id: prerequisite
+      run: |
+        chmod -R 777 *
+        WS=''/__w/cd-test-2/cd-test-2''
+        cp $WS/RSG_Common_action/source/helm_ci.sh .
+        cp $WS/RSG_Common_action/source/wiremock_deployment.sh .
+        cp $WS/RSG_Common_action/source/resource_change_details.py .
+        cp $WS/RSG_Common_action/source/update_tfvar_file.py .
+        cp $WS/RSG_Common_action/source/store_secrets.py .
+        cp $WS/RSG_Common_action/source/ecr_push.sh .
+        cp $WS/RSG_Common_action/source/iot_testautomation.sh .
+        cp $WS/RSG_Common_action/source/rsm-gating-automation.sh .
+
+    - name: Upload ECR to destination aws account
+      shell: bash
+      run: |
+          ls -la
+          pwd
+          # ls -la RSG_Common_action/source/ || echo "Directory not found"
+          chmod +x ecr_push.sh
+          ./ecr_push.sh "QA-MASTER" ${{ env.group_name }} "EU-WEST" ${{ env.workdir_path }}
+      env:
+        workdir_path: /__w/cd-test-2/cd-test-2
+        group_name: OnCloudGatewayGroup
+
+    - name: Configure AWS credentials (OIDC-LOCAL)
+      uses: aws-actions/configure-aws-credentials@50ac8dd1e1b10d09dac7b8727528b91bed831ac0
+      with:
+        role-to-assume: arn:aws:iam::537124975543:role/oidc_local_ci_automation
+        role-session-name: gha-session-local
+        #aws-region: eu-west-1 
+        aws-region: eu-west-1
+
+    - name: Check if SSM folder is present in HSP_PS_RSG_${{ env.group_name }}_Environment && HSP_PS_RSG_SG_Environment
+      shell: bash
+      run: |
+        if [ ! -d "${{ env.workspace }}/HSP_PS_RSG_SG_Common_Environment/EU-WEST/SSM" ]; then
+          echo "SSM folder not found in HSP_PS_RSG_SG_Common_Environment"
+          echo "Skipping SSM Execution for the HSP_PS_RSG_SG_Common_Environment"
+          echo "SSM_FOLDER_EXISTS=false" >> $GITHUB_ENV
+        fi
+        if [ ! -d "${{ env.workspace }}/HSP_PS_RSG_${{ env.group_name }}_Environment/EU-WEST/SSM" ]; then
+          echo "SSM folder not found in HSP_PS_RSG_${{ env.group_name }}_Environment"
+          echo "Skipping SSM Execution for the ${{ env.group_name }} ServiceGroup"
+          echo "SSM_FOLDER_EXISTS=false" >> $GITHUB_ENV
+        else
+          echo "SSM folder exists in HSP_PS_RSG_${{ env.group_name }}_Environment"
+          echo "SSM_FOLDER_EXISTS=true" >> $GITHUB_ENV
+        fi
+        COMMON_SSM_REQUIRED=$(jq -r '.common_ssm_required' "${{ env.workspace }}/HSP_PS_RSG_${{ env.group_name }}_CICD/Versions/RSG_${{ env.group_name}}IacConfiguration/Version.json")
+        echo "COMMON_SSM_REQUIRED=${COMMON_SSM_REQUIRED}" >> $GITHUB_ENV
+      env:
+        workspace: /__w/cd-test-2/cd-test-2
+        group_name: OnCloudGatewayGroup
+
+    - name: Store_Secrets
+      if: ${{ env.SSM_FOLDER_EXISTS == 'true' || env.COMMON_SSM_REQUIRED == 'true' }}
+      id: run_secrets
+      shell: bash
+      run: |
+        set +e
+        /usr/bin/python3 store_secrets.py "${{ env.envName }}" "${{ env.groupName }}" "${{ env.regionName }}" "${{ env.branchName }}" "${{ env.workspace }}"
+      env:
+        workspace: /__w/cd-test-2/cd-test-2
+        envName: QA-MASTER
+        groupName: OnCloudGatewayGroup
+        regionName: EU-WEST
+        branchName: ci-master
+        
+    - name: Setup Jumpbox
+      id: set_jumpbox
+      uses: philips-internal/RSG_Common_action/.github/actions/JumpBox@ci_migration_poc
+      with:
+        deploy_env: QA-MASTER
+        group_name: OnCloudGatewayGroup
+        region: EU-WEST
+        github_token: ${{ steps.prerequisite.outputs.repo_token }}
+        action: "APPLY"
+        actor: ${{ github.actor }}
+        run_number: ${{ github.run_number }}
+    
+    - name: Update TFVars | Bootstrap
+      run: |
+          /usr/bin/python3 update_tfvar_file.py ${{ env.group_name }} ${{ env.action_name }}
+      env:
+        group_name: OnCloudGatewayGroup
+        action_name: Bootstrap
+        
+    - name: Execute Terraform | Bootstrap
+      run: |
+          ./wiremock_deployment.sh ${{ env.release_name }} ${{ env.group_name }} ${{ env.branch_name }} ${{ env.WORKDIR_PATH }} ${{ env.execution_type }}
+      env:
+        release_name: NA
+        group_name: OnCloudGatewayGroup
+        branch_name: master
+        WORKDIR_PATH: /__w/cd-test-2/cd-test-2
+        execution_type: Bootstrap
+        
+    - name: Update TFVars | Provisioning
+      run: |
+          /usr/bin/python3 update_tfvar_file.py ${{ env.group_name }} ${{ env.action_name }}
+      env:
+        group_name: OnCloudGatewayGroup
+        action_name: Provisioning
+        
+    - name: Execute Terraform | Provisioning
+      run: |
+          ./wiremock_deployment.sh ${{ env.release_name }} ${{ env.group_name }} ${{ env.branch_name }} ${{ env.WORKDIR_PATH }} ${{ env.execution_type }}
+      env:
+        release_name: NA
+        group_name: OnCloudGatewayGroup
+        branch_name: master
+        WORKDIR_PATH: /__w/cd-test-2/cd-test-2
+        execution_type: Provisioning
+    
+    - name: Execute Helm Packaging
+      id: helm_solution
+      run: |
+          ./helm_ci.sh ${{ env.release_name }} ${{ env.group_name }} ${{ env.workspace }}
+      env:
+        release_name: NA
+        group_name: OnCloudGatewayGroup
+        workspace: /__w/cd-test-2/cd-test-2
+
+    - name: Execute PostRunner Script
+      id: postrunner
+      run: |
+        cd /__w/cd-test-2/cd-test-2/automation_test_suite/helm/
+        echo "Release Version: ${{ steps.helm_solution.outputs.release_version }}"
+        echo "Namespace: ${{ steps.helm_solution.outputs.namespace }}"
+        ./postrunner.sh ${{ steps.helm_solution.outputs.release_version }} ${{ steps.helm_solution.outputs.namespace }}
+    
+    - name: Execute WiremockBootstrap
+      id: wiremock_bootstrap
+      run: |
+        # Read service names from config.txt
+        WS=''/__w/cd-test-2/cd-test-2''
+        wiremock_svc=$(grep "wiremock-svc-name=" $WS/automation_test_suite/helm/config.txt | cut -d'=' -f2)
+        echo "Wiremock service: $wiremock_svc"
+        local_port=$(shuf -i 8000-65535 -n 1)
+        echo "local_port: $local_port"
+        cd $WS/automation_test_suite/mock_SCM_aws/wiremock
+        unset http_proxy
+        unset https_proxy
+        unset HTTP_PROXY
+        unset HTTPS_PROXY
+        nohup kubectl port-forward svc/$wiremock_svc $local_port:8080 -n ${{ steps.helm_solution.outputs.namespace }} > portforward.log 2>&1 &
+        echo "Port forward command: kubectl port-forward svc/$wiremock_svc $local_port:8080 -n ${{ steps.helm_solution.outputs.namespace }}"
+        sleep 1m
+        ./wireMockBootstrap.sh $local_port
+      env:
+        env_name: QA-MASTER
+
+    - name: Configure AWS credentials (OIDC-LOCAL)
+      uses: aws-actions/configure-aws-credentials@50ac8dd1e1b10d09dac7b8727528b91bed831ac0
+      with:
+        role-to-assume: arn:aws:iam::537124975543:role/oidc_local_ci_automation
+        role-session-name: gha-session-local
+        #aws-region: eu-west-1 
+        aws-region: eu-west-1
+
+    - name: Execute CI Automation
+      id: ci_automation
+      run: | 
+        vault_role_id=$(aws secretsmanager get-secret-value --region eu-west-1 --secret-id ci_pipeline --query SecretString --output text | jq -r '.VAULT_ROLE_ID')
+        vault_secret_id=$(aws secretsmanager get-secret-value --region eu-west-1 --secret-id ci_pipeline --query SecretString --output text | jq -r '.VAULT_SECRET_ID')
+        vault_secret_path=$(aws secretsmanager get-secret-value --region eu-west-1 --secret-id ci_pipeline --query SecretString --output text | jq -r '.VAULT_SECRET_PATH')
+        WS=''/__w/cd-test-2/cd-test-2''
+        ACCOUNT_LOCAL_ROLE="arn:aws:iam::537124975543:role/oidc_local_ci_automation"
+        CREDS=$(aws sts assume-role \
+          --role-arn "$ACCOUNT_LOCAL_ROLE" \
+          --role-session-name "github-local")
+        export AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r '.Credentials.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r '.Credentials.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r '.Credentials.SessionToken')
+        testservice_svc=$(grep "service-name=" $WS/automation_test_suite/helm/config.txt | cut -d'=' -f2)
+        echo "Test service: $testservice_svc"
+        local_port=$(shuf -i 8000-65535 -n 1)
+        echo "Port forward command: kubectl port-forward svc/$testservice_svc $local_port:8080 -n ${{ steps.helm_solution.outputs.namespace }}"
+        nohup kubectl port-forward svc/$testservice_svc $local_port:8080 -n ${{ steps.helm_solution.outputs.namespace }} > testservice.log 2>&1 &
+        cd $WS/automation_test_suite
+        sleep 1m
+        mvn -q test -Droleid=$vault_role_id -Dsecretid=$vault_secret_id -Dservicesecretpath=$vault_secret_path "-Dkarate.options=--tags @Mock" -Denv=aws -Dserviceport=$local_port -Drabbitmqport=${{ env.rabbitmq_management_local_port }} -Ddbport=${{ env.db_local_port }} -Dredisport=${{ env.redis_local_port }}
+        cd ..
+        verify_threshold() {
+          echo "Verify Threshold for "${{ env.AUTOMATION_TYPE }}" "
+          # sed -i 's/\r$//' rsm-gating-automation.sh
+          
+          if [[ -d ${{ env.WORKDIR_PATH }}/"${{ env.AUTOMATION_PATH }}/Gate" ]]
+          then
+            threshold_val=$(jq ".${{ env.AUTOMATION_TYPE }}" ${{ env.WORKDIR_PATH }}/"${{ env.AUTOMATION_PATH }}/Gate/gate.json")
+          else
+            threshold_val=100
+          fi
+          ./rsm-gating-automation.sh "${{ env.WORKDIR_PATH }}/"${{ env.AUTOMATION_PATH }}/"target/cucumber-html-reports" "${{ env.AUTOMATION_TYPE }}" $threshold_val
+        }
+        verify_threshold
+
+      env:
+        WORKDIR_PATH: /__w/cd-test-2/cd-test-2
+        AUTOMATION_PATH: automation_test_suite
+        AUTOMATION_TYPE: Mock
+
+    - name: Execute Wiremock Teardown
+      if: always()
+      id: wiremock_teardown
+      run: |
+        WS=''/__w/cd-test-2/cd-test-2''
+        cd $WS/automation_test_suite/mock_SCM_aws/wiremock
+        ./wireMockteardown.sh ${{ steps.wiremock_bootstrap.outputs.local_port }}
+        helm uninstall ${{ steps.helm_solution.outputs.release_name }} -n ${{ steps.helm_solution.outputs.namespace }}
+        
+    - name: Configure AWS credentials (OIDC)
+      if: always()
+      uses: aws-actions/configure-aws-credentials@50ac8dd1e1b10d09dac7b8727528b91bed831ac0
+      with:
+        role-to-assume: arn:aws:iam::290447894946:role/oidc_ci_cloud_group
+        role-session-name: gha-session
+        aws-region: eu-west-1
+
+    - name: Store Result to S3
+      shell: bash
+      if: always()
+      run: |
+        # Determine status based on step outcome
+        if [[ "${{ steps.wiremock_teardown.outcome }}" == "success" && "${{ steps.ci_automation.outcome }}" == "success" ]]; then
+          STATUS="SUCCESS"
+        else
+          STATUS="FAILURE"
+        fi
+        echo "CI Automation Status: $STATUS"
+        # Get AWS account ID
+        aws_account_id=$(aws sts get-caller-identity --query Account --output text)
+        S3_PATH="s3://${aws_account_id}-automation-status-check/${{ github.event.inputs.s3_key }}/"
+        echo "{\"ci_automation_status\":\"$STATUS\"}" > statuscheck.json
+        echo "Created statuscheck.json:"
+        cat statuscheck.json
+        # Upload to S3
+        aws s3 cp statuscheck.json "$S3_PATH"
+      
+    - name: Cleanup
+      if: always()
+      uses: philips-internal/RSG_Common_action/.github/actions/CleanUp@ci_migration_poc
+      with:
+        RUNNER_WORKSPACE: $RUNNER_WORKSPACE
+        GITHUB_WORKSPACE: $GITHUB_WORKSPACE
+        CI_AUTOMATION: 'true'

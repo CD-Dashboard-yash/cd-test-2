@@ -56,6 +56,67 @@ jobs:
         ROLE_ID: NO
         SECRET_ID: NO
         JAVA_VERSION: JAVA17
+    - name: Upload Images SG | ci-master
+      if: ${{ env.AUTOMATION_FOLDER_EXISTS == 'true' }}
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: iot_upload_ecr
+      env:
+        WORKDIR: /github/workspace
+        IOT_SERVICE_TYPE: AWS
+        POM_PATH: source/HubMonitoringRegistrationService
+        SERVICE_NAME: IoTHubMonitoringRegistrationService
+        DOCKER_IMAGE_NAME: monitoring-registration-service
+        RELEASE: ci-master
+
+    - name: Package Helm Chart | ci-master
+      if: ${{ env.AUTOMATION_FOLDER_EXISTS == 'true' }}
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: update_chart_version
+      env:
+        WORKDIR: /github/workspace
+        POM_PATH: source/HubMonitoringRegistrationService
+        SERVICE_GROUP: HSP_PS_RSG_OnPremMonitoringGroup_CICD
+        VERSION_PATH: Versions/IoT.HubMonitoringRegistrationService
+        BRANCH_NAME: ci-master
+
+    - name: Update Version SG | ci-master
+      if: ${{ env.AUTOMATION_FOLDER_EXISTS == 'true' }}
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: update_servicegroup_version
+      env:
+        WORKDIR: /github/workspace
+        VERSION_PATH: Versions/IoT.HubMonitoringRegistrationService
+        ARTIFACT_VERSION: source/HubMonitoringRegistrationService
+        ARTIFACTORY_PATH: iot-releases/IoTCLOUD/IoTHubMonitoringRegistrationService/IoTHubMonitoringRegistrationService
+        HARBOR_PATH: ci-master/monitoring-registration-service
+        BRANCH_NAME: ci-master
+        SERVICE_GROUP: HSP_PS_RSG_OnPremMonitoringGroup_CICD
+
+    - name: Upload Automation Status Check file to S3
+      if: ${{ env.AUTOMATION_FOLDER_EXISTS == 'true' }}
+      uses: philips-internal/RSG_Common_action@ci_migration_poc
+      with:
+        ACTION: automation_status_check
+      env:
+        group_name: OnCloudGatewayGroup
+        service_name: cd-test-2
+        run_number: ${{ github.run_number }}
+
+    - name: Trigger CI_Automation Pipeline
+      if: ${{ env.AUTOMATION_FOLDER_EXISTS == 'true' }}
+      run: |
+        curl -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ steps.prerequisite.outputs.GH_TOKEN }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          https://api.github.com/repos/${{ github.repository }}/actions/workflows/ci_automation.yml/dispatches \
+          -d '{"ref":"${{ github.ref_name }}","inputs":{"s3_key":"${{ env.group_name }}/${{ env.service_name }}/${{ github.run_number }}"}}'
+      env:
+        group_name: OnCloudGatewayGroup
+        service_name: cd-test-2
     - name: Automated Test Sanity
       uses: philips-internal/RSG_Common_action@ci_migration_poc
       with:
@@ -68,7 +129,36 @@ jobs:
         DB_TUNNEL_URL: postgres-2bbc191d-44de-41b4-a4e0-23ed0f76ddbd.chzzajfvmzaf.eu-west-1.rds.amazonaws.com
         SERVICE_NAME: IoT.HubMonitoringRegistrationService
         JAVA_VERSION: JAVA11
-    - name: Upload Artifacts
+
+    - name: Validate Execution of CI_Automation Pipeline
+      if: ${{ env.AUTOMATION_FOLDER_EXISTS == 'true' }}
+      run: |
+        echo "Waiting for CI_Automation result..."
+        while true; do
+          rm -f statuscheck.json
+          aws_account_id=$(aws sts get-caller-identity --query Account --output text)
+          echo "AWS Account ID: $aws_account_id"
+          S3_BUCKET="$aws_account_id-automation-status-check"
+          aws s3 --region eu-west-1 cp s3://$S3_BUCKET/${{ env.group_name }}/${{ env.service_name }}/${{ github.run_number }}/statuscheck.json statuscheck.json 2>/dev/null || true
+          if [ -s statuscheck.json ]; then
+            STATUS=$(jq -r '.ci_automation_status // empty' statuscheck.json 2>/dev/null)
+            if [ "$STATUS" = "SUCCESS" ]; then
+              echo "AWS Automation PASSED"
+              break
+            fi
+            if [ "$STATUS" = "FAILURE" ]; then
+              echo "AWS Automation FAILED"
+              exit 1
+            fi
+          fi
+          echo "Still waiting..."
+          sleep 5m
+        done
+      env:
+        group_name: OnCloudGatewayGroup
+        service_name: cd-test-2
+
+        - name: Upload Artifacts
       uses: philips-internal/RSG_Common_action@ci_migration_poc
       with:
         ACTION: iot-upload-artifacts

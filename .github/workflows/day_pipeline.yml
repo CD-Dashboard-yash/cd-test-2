@@ -158,7 +158,7 @@ jobs:
         group_name: OnCloudGatewayGroup
         service_name: cd-test-2
 
-        - name: Upload Artifacts
+    - name: Upload Artifacts
       uses: philips-internal/RSG_Common_action@ci_migration_poc
       with:
         ACTION: iot-upload-artifacts

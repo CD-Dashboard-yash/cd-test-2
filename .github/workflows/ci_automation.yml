@@ -212,6 +212,10 @@ jobs:
         echo "Port forward command: kubectl port-forward svc/$testservice_svc $local_port:8080 -n ${{ steps.helm_solution.outputs.namespace }}"
         nohup kubectl port-forward svc/$testservice_svc $local_port:8080 -n ${{ steps.helm_solution.outputs.namespace }} > testservice.log 2>&1 &
         cd $WS/automation_test_suite
+        export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+        export PATH=$JAVA_HOME/bin:$PATH
+        echo "The Current JAVA Version is"
+        java --version
         sleep 1m
         mvn -q test -Droleid=$vault_role_id -Dsecretid=$vault_secret_id -Dservicesecretpath=$vault_secret_path "-Dkarate.options=--tags @Mock" -Denv=aws -Dserviceport=$local_port -Drabbitmqport=${{ env.rabbitmq_management_local_port }} -Ddbport=${{ env.db_local_port }} -Dredisport=${{ env.redis_local_port }}
         cd ..

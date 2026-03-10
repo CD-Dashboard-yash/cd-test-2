@@ -46,8 +46,7 @@ jobs:
 
         echo "datetime=$datetime" >>$GITHUB_OUTPUT
     - name: Build
-      run: |
-        chmod -R 777 *
+      run: 'chmod -R 777 *
 
         ./iot_build.sh ${{ env.WORKDIR_PATH }} ${{ env.POM_PATH }} ${{ env.BUILD_TYPE }} ${{ env.SERVICE_TYPE }} ${{ env.SKIP_MUTATIONTEST }} ${{ env.INSTALL_PATH }} ${{ env.SERVICE_NAME }} ${{ env.JUNIT_VERSION }} ${{ env.ROLE_ID }} ${{ env.SECRET_ID }} ${{ env.JAVA_VERSION }}'
       env:

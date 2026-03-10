@@ -31,6 +31,13 @@ jobs:
         chmod -R 777 *
 
         WS=''/__w/psi2m-IoT.HubMonitoringRegistrationService/psi2m-IoT.HubMonitoringRegistrationService''
+        if [[ ! -d $WS/automation_test_suite/mock_SCM_aws ]]; then
+          echo "Automation test suite not found, CI_Automation will be skipped"
+          echo "AUTOMATION_FOLDER_EXISTS=false" >> $GITHUB_ENV
+        else
+          echo "Automation test suite found, will proceed with CI_Automation execution"
+          echo "AUTOMATION_FOLDER_EXISTS=true" >> $GITHUB_ENV
+        fi
 
         sudo cp $WS/RSG_Common_action/source/IoT/settings.xml $WS/source/HubMonitoringRegistrationService
 

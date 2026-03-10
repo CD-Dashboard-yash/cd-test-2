@@ -27,7 +27,8 @@ jobs:
         PROGRAM_NAME: HUB
     - name: Prerequisite
       id: prerequisite
-      run: 'chmod -R 777 *
+      run: |
+        chmod -R 777 *
 
         WS=''/__w/psi2m-IoT.HubMonitoringRegistrationService/psi2m-IoT.HubMonitoringRegistrationService''
 
@@ -35,13 +36,18 @@ jobs:
 
         sudo cp $WS/RSG_Common_action/source/IoT/iot_build.sh .
 
-        sed -i -e ''s/\r$//'' iot_build.sh
+        dos2unix iot_build.sh 2>/dev/null || sed -i 's/\r$//' iot_build.sh
+        chmod +x iot_build.sh
+        GH_TOKEN=$(aws secretsmanager get-secret-value --region eu-west-1 --secret-id ci_pipeline --query SecretString --output text | jq -r '.CLONE_TOKEN')
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_OUTPUT
 
         datetime=$(date +''%Y%m%d.%H_%M'')
 
-        echo "datetime=$datetime" >>$GITHUB_OUTPUT'
+        echo "datetime=$datetime" >>$GITHUB_OUTPUT
     - name: Build
-      run: 'chmod -R 777 *
+      run: |
+        chmod -R 777 *
 
         ./iot_build.sh ${{ env.WORKDIR_PATH }} ${{ env.POM_PATH }} ${{ env.BUILD_TYPE }} ${{ env.SERVICE_TYPE }} ${{ env.SKIP_MUTATIONTEST }} ${{ env.INSTALL_PATH }} ${{ env.SERVICE_NAME }} ${{ env.JUNIT_VERSION }} ${{ env.ROLE_ID }} ${{ env.SECRET_ID }} ${{ env.JAVA_VERSION }}'
       env:

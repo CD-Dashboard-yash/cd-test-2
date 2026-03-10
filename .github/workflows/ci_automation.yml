@@ -193,6 +193,7 @@ jobs:
         aws-region: eu-west-1
 
     - name: Execute CI Automation
+      shell: bash
       id: ci_automation
       run: | 
         vault_role_id=$(aws secretsmanager get-secret-value --region eu-west-1 --secret-id ci_pipeline --query SecretString --output text | jq -r '.VAULT_ROLE_ID')
